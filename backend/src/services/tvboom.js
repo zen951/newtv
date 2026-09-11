@@ -42,7 +42,7 @@ async function confirmEmail(jar, link, log) {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export default {
-  meta: { id: "tvboom", name: "TVBoom", description: "24 Hours" },
+  meta: { id: "tvboom", name: "TVBoom", description: `${TRIAL_HOURS} Hours` },
 
   async execute({
     provider,

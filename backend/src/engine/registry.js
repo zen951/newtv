@@ -23,12 +23,20 @@ import LibertyTvService from "../services/libertytv.js";
 import OneIptv4kService from "../services/oneiptv4k.js";
 import TvCornService from "../services/tvcorn.js";
 import LayerSevenService from "../services/layerseven.js";
-import KookaService from "../services/kooka.js";
+import KookaService from "../services/kooka-kiwi-platform/kooka.js";
+import MyKiwiTvService from "../services/kooka-kiwi-platform/mykiwitv.js";
 import GreatestIptvService from "../services/greatestiptv.js";
 
+import VocoIptvService from "../services/voco-fos-layer-iptvs-platform/vocoiptv.js";
+import FosTvService from "../services/voco-fos-layer-iptvs-platform/fostv.js";
+import LayerSevenTvService from "../services/voco-fos-layer-iptvs-platform/layerseventv.js";
+import IPTVSubscribeService from "../services/voco-fos-layer-iptvs-platform/iptvsubscribe.js";
 import EmeraldIptvService from "../services/emeraldiptv.js";
-// import UspehService from "../services/uspeh.js";
-// import RuTvService from "../services/rutv.js";
+import RevoIptvService from "../services/revoiptv.js";
+
+import UspehService from "../services/uspeh.js";
+import RuTvService from "../services/rutv.js";
+import VibeFlixtTvService from "../services/vibeflixtv.js";
 
 export const emailProviders = [
   EmailnatorProvider,
@@ -50,11 +58,19 @@ export const registrationServices = [
   TvCornService,
   LayerSevenService,
   KookaService,
+  MyKiwiTvService,
   GreatestIptvService,
+  VocoIptvService,
 
+  FosTvService,
+  LayerSevenTvService,
+  IPTVSubscribeService,
   EmeraldIptvService,
-  // UspehService,
-  // RuTvService,
+  RevoIptvService,
+
+  UspehService,
+  RuTvService,
+  VibeFlixtTvService,
 ];
 
 // Looks up a provider by its meta.id. Returns null if not found.

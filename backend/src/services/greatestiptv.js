@@ -21,7 +21,7 @@ export default {
   meta: {
     id: "greatestiptv",
     name: "GreatestIPTV",
-    description: "36 Hours",
+    description: `${TRIAL_HOURS} Hours`,
   },
 
   async execute({

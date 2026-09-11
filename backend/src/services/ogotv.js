@@ -25,6 +25,7 @@ import { createJar, get, post, jsonPost } from "../http/cookieClient.js";
 
 const BASE = "https://ogotv.com";
 const TAG = "OgoTV";
+const TRIAL_HOURS = 24;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ export default {
   meta: {
     id: "ogotv",
     name: "OgoTV (Gmails)",
-    description: "24 Hours",
+    description: `${TRIAL_HOURS} Hours`,
   },
 
   async execute({

@@ -11,10 +11,8 @@
  *   - "daily_cooldown" means a trial is already active for this email address.
  *   - "trial_limit" means all 7 days have already been claimed.
  *   - The "website" field is a honeypot -- must be left empty.
- *   - The server validates clientName looks like a real name (First Last)
- *     and clientPhone matches Irish mobile format (08X XXXXXXX or +353 8X...).
  */
-import { buildM3u, buildResult } from "../parsing/generators.js";
+import { generatePhone, buildM3u, buildResult } from "../parsing/generators.js";
 import { jsonPost } from "../http/cookieClient.js";
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -23,93 +21,7 @@ const BASE_URL = "https://emeraldiptv.irish";
 const CLAIM_URL = `${BASE_URL}/api/claim-trial/`;
 const TAG = "EmeraldIPTV";
 const TRIAL_HOURS = 24;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-// Common Irish/English first and last names for plausible contact details.
-const FIRST_NAMES = [
-  "Liam",
-  "Ciaran",
-  "Sean",
-  "Conor",
-  "Brendan",
-  "Niall",
-  "Padraig",
-  "Eoin",
-  "Aoife",
-  "Siobhan",
-  "Niamh",
-  "Caoimhe",
-  "Roisin",
-  "Fiona",
-  "Sinead",
-  "Orla",
-  "James",
-  "Patrick",
-  "Michael",
-  "David",
-  "Daniel",
-  "Emma",
-  "Sarah",
-  "Claire",
-  "Kevin",
-  "Declan",
-  "Oisin",
-  "Cillian",
-  "Tadhg",
-  "Ruairi",
-  "Meadhbh",
-  "Sorcha",
-];
-const LAST_NAMES = [
-  "Murphy",
-  "Kelly",
-  "Brien",
-  "Walsh",
-  "Smith",
-  "Sullivan",
-  "Byrne",
-  "Ryan",
-  "Connor",
-  "Neill",
-  "Reilly",
-  "Doyle",
-  "McCarthy",
-  "Gallagher",
-  "Doherty",
-  "Kennedy",
-  "Lynch",
-  "Murray",
-  "Quinn",
-  "Moore",
-  "McLaughlin",
-  "Carroll",
-  "Connolly",
-  "Nolan",
-  "Burke",
-  "Collins",
-  "Campbell",
-  "Clarke",
-];
-
-// Irish mobile prefixes (083/085/086/087/089).
-const MOBILE_PREFIXES = ["083", "085", "086", "087", "089"];
-
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-// Returns a plausible Irish full name e.g. "Ciaran Murphy".
-function generateIrishName() {
-  return `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`;
-}
-
-// Returns a 10-digit Irish mobile number e.g. "0871234567".
-function generateIrishPhone() {
-  const prefix = pick(MOBILE_PREFIXES);
-  const suffix = String(Math.floor(Math.random() * 9_000_000) + 1_000_000);
-  return prefix + suffix;
-}
+const name = "john";
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -117,13 +29,10 @@ export default {
   meta: {
     id: "emeraldiptv",
     name: "Emerald IPTV",
-    description: "24 Hours",
+    description: `${TRIAL_HOURS} Hours`,
   },
 
   async execute({ email, log = () => {} }) {
-    const name = generateIrishName();
-    const phone = generateIrishPhone();
-
     log(`[${TAG}] Submitting trial claim for ${email}...`);
 
     const data = await jsonPost(
@@ -133,7 +42,7 @@ export default {
         clientName: name,
         website: "", // honeypot -- must stay empty
         clientEmail: email,
-        clientPhone: phone,
+        clientPhone: generatePhone(),
         deviceType: "m3u",
         deviceLabel: "Smart TV",
       },

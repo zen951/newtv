@@ -167,7 +167,7 @@ export default {
   meta: {
     id: "layerseven",
     name: "LayerSeven",
-    description: "24 Hours",
+    description: `${TRIAL_HOURS} Hours`,
   },
 
   async execute({ email, taskId, emitter, log = () => {} }) {

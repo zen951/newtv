@@ -27,6 +27,7 @@ const BASE_URL = "https://en.tvcorn.com";
 const TAG = "TVCorn";
 const POLL_INTERVAL = 3_000;
 const POLL_TIMEOUT = 180_000;
+const TRIAL_HOURS = 24;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ export default {
   meta: {
     id: "tvcorn",
     name: "TVCorn (No Ml.tm)",
-    description: "24 Hours",
+    description: `${TRIAL_HOURS} Hours`,
   },
 
   async execute({

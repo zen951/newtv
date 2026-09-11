@@ -177,7 +177,7 @@ export default {
   meta: {
     id: "libertytv",
     name: "LibertyTV (Gmails)",
-    description: "24 Hours",
+    description: `${TRIAL_HOURS} Hours`,
   },
 
   async execute({
