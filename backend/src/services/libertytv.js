@@ -10,9 +10,15 @@
  *   6. POST /claim-trial.php → claim Arabic Package (region 32)
  *   7. GET  /dashboard.php   → extract the M3U playlist link
  *
- * Cookie strategy: cookieClient uses redirect:"manual" and manually follows
+ * Cookie strategy: custom request client uses redirect:"manual" and manually follows
  * every hop, collecting Set-Cookie at each 302 — fetch() with redirect:"follow"
  * would silently drop cookies set on intermediate redirects.
+ *
+ * Vercel / Cloudflare compatibility:
+ *   - Sends realistic Chrome client hint and sec-fetch headers to prevent WAF bot triggers.
+ *   - Supports multi-strategy CSRF extraction (hidden input, inline LTV3_CSRF, meta tag).
+ *   - Detects Cloudflare challenge/datacenter IP blocks with descriptive messages.
+ *   - Supports HTTPS_PROXY / PROXY_URL environment variables for datacenter IP bypass.
  */
 import {
   generateUsername,
@@ -22,11 +28,13 @@ import {
 import { extractPlaylists } from "../parsing/extractors.js";
 import {
   createJar,
-  get,
-  post,
+  mergeCookies,
+  cookieStr,
   extractInputValue,
+  extractCsrfToken,
   plainText,
   stripHtml,
+  errSnippet,
 } from "../http/cookieClient.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -39,6 +47,156 @@ const CLAIM_TRIAL_URL = `${BASE_URL}/claim-trial.php`;
 const TAG = "LibertyTV";
 const TRIAL_HOURS = 24;
 const TRIAL_REGION = "32"; // Arabic Package
+const DEFAULT_TIMEOUT = 30_000;
+const MAX_REDIRECTS = 10;
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+// ── Proxy Dispatcher (Lazy) ───────────────────────────────────────────────────
+
+let proxyDispatcher = null;
+const proxyUrl =
+  process.env.HTTPS_PROXY ||
+  process.env.HTTP_PROXY ||
+  process.env.PROXY_URL;
+
+async function getDispatcher() {
+  if (!proxyUrl) return undefined;
+  if (!proxyDispatcher) {
+    try {
+      const { ProxyAgent } = await import("undici");
+      proxyDispatcher = new ProxyAgent(proxyUrl);
+    } catch {
+      // undici dispatcher fallback
+    }
+  }
+  return proxyDispatcher;
+}
+
+// ── HTTP Client ───────────────────────────────────────────────────────────────
+
+/**
+ * Executes an HTTP request with full browser headers and manual redirect tracking
+ * so cookies are properly preserved across 3xx redirects.
+ */
+async function ltvRequest(method, url, jar, opts = {}) {
+  const {
+    body = null,
+    referer = "https://libertytv.net/",
+    origin = null,
+    timeout = DEFAULT_TIMEOUT,
+  } = opts;
+
+  const resolvedJar = jar ?? {};
+  let currentUrl = url;
+  let currentMethod = method;
+  let currentBody = body;
+  const dispatcher = await getDispatcher();
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const isPost = currentMethod === "POST";
+    const currentOrigin = origin ?? new URL(currentUrl).origin;
+
+    const headers = {
+      "User-Agent": BROWSER_UA,
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+      "Accept-Language": "en-US,en;q=0.9",
+      "sec-ch-ua":
+        '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": isPost
+        ? "same-origin"
+        : referer?.includes("account.libertytv.net")
+          ? "same-origin"
+          : "cross-site",
+      "sec-fetch-user": "?1",
+      "upgrade-insecure-requests": "1",
+      ...(referer ? { Referer: referer } : {}),
+      Cookie: cookieStr(resolvedJar),
+    };
+
+    if (isPost) {
+      Object.assign(headers, {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: currentOrigin,
+        Referer: referer ?? currentUrl,
+      });
+    }
+
+    const fetchOpts = {
+      method: currentMethod,
+      headers,
+      body:
+        isPost && currentBody
+          ? new URLSearchParams(currentBody).toString()
+          : undefined,
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeout),
+    };
+
+    if (dispatcher) {
+      fetchOpts.dispatcher = dispatcher;
+    }
+
+    const res = await fetch(currentUrl, fetchOpts);
+    mergeCookies(resolvedJar, res);
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) break;
+      currentUrl = new URL(location, currentUrl).href;
+      currentMethod = "GET";
+      currentBody = null;
+      continue;
+    }
+
+    return {
+      text: await res.text(),
+      finalUrl: currentUrl,
+      status: res.status,
+    };
+  }
+
+  throw new Error(`[${TAG}] Too many redirects from ${url}`);
+}
+
+const ltvGet = (url, jar, opts) => ltvRequest("GET", url, jar, opts);
+const ltvPost = (url, jar, body, referer, opts) =>
+  ltvRequest("POST", url, jar, { body, referer, ...opts });
+
+// ── Multi-strategy CSRF Extractor ─────────────────────────────────────────────
+
+function extractLibertyCsrf(html) {
+  if (!html || typeof html !== "string") return null;
+
+  // 1. Standard name="csrf" value="..."
+  const m1 = /name\s*=\s*["']?csrf["']?[^>]*?value\s*=\s*["']([^"']+)["']/i.exec(
+    html,
+  );
+  if (m1?.[1]) return m1[1];
+
+  // 2. Reversed value="..." name="csrf"
+  const m2 = /value\s*=\s*["']([^"']+)["'][^>]*?name\s*=\s*["']?csrf["']?/i.exec(
+    html,
+  );
+  if (m2?.[1]) return m2[1];
+
+  // 3. Inline JS variable: const LTV3_CSRF = "..."
+  const m3 = /LTV3_CSRF\s*=\s*["']([^"']+)["']/i.exec(html);
+  if (m3?.[1]) return m3[1];
+
+  // 4. Object property: csrfToken: "..." or csrf_token = "..."
+  const m4 = /(?:csrfToken|csrf_token)\s*[:=]\s*["']([^"']+)["']/i.exec(html);
+  if (m4?.[1]) return m4[1];
+
+  // 5. Shared generic extractors
+  return extractInputValue(html, "csrf") || extractCsrfToken(html) || null;
+}
 
 // ── Steps ─────────────────────────────────────────────────────────────────────
 
@@ -46,22 +204,50 @@ const TRIAL_REGION = "32"; // Arabic Package
 // Returns the verification status and any CSRF/email values the server embedded
 // in the redirect landing — avoids an extra GET that could reset the session.
 async function register(jar, { name, email, password }, log) {
-  const { text: regPage } = await get(REGISTER_URL, jar);
-  const csrf = extractInputValue(regPage, "csrf");
-  if (!csrf)
-    throw new Error(`[${TAG}] Could not extract CSRF from register.php.`);
+  log(`[${TAG}] Fetching register page…`);
+  const { text: regPage, status, finalUrl } = await ltvGet(REGISTER_URL, jar, {
+    referer: "https://libertytv.net/",
+  });
+
+  // Check for Cloudflare challenge / WAF blocking on Vercel datacenter IPs
+  const isCloudflareBlocked =
+    status === 403 ||
+    status === 503 ||
+    /just a moment|cf-turnstile|cf-browser-verification|challenge-platform|attention required|cloudflare ray id/i.test(
+      regPage,
+    );
+
+  if (isCloudflareBlocked) {
+    throw new Error(
+      `[${TAG}] Cloudflare bot protection blocked register.php (HTTP ${status}). The target site is restricting Vercel datacenter IPs. Set HTTPS_PROXY or PROXY_URL in Vercel Environment Variables to bypass datacenter IP blocking.`,
+    );
+  }
+
+  if (status >= 400) {
+    throw new Error(
+      `[${TAG}] register.php returned HTTP ${status}: ${errSnippet(regPage, 150)}`,
+    );
+  }
+
+  const csrf = extractLibertyCsrf(regPage);
+  if (!csrf) {
+    const pageSnippet = stripHtml(regPage).slice(0, 200);
+    throw new Error(
+      `[${TAG}] Could not extract CSRF from register.php (HTTP ${status}, URL: ${finalUrl}). Page preview: "${pageSnippet}"`,
+    );
+  }
 
   log(`[${TAG}] Submitting registration for ${email}…`);
-  const { finalUrl, text } = await post(
+  const { finalUrl: landedUrl, text } = await ltvPost(
     REGISTER_URL,
     jar,
     { csrf, ref: "", tz_detected: "America/New_York", name, email, password },
     REGISTER_URL,
   );
 
-  const verifycsrf = extractInputValue(text, "csrf") ?? "";
+  const verifycsrf = extractLibertyCsrf(text) ?? "";
   const emailFromPage = extractInputValue(text, "email") ?? "";
-  const landed = finalUrl ?? "";
+  const landed = landedUrl ?? "";
 
   const isVerifyPage =
     landed.includes("verify-email") ||
@@ -94,9 +280,11 @@ async function register(jar, { name, email, password }, log) {
 // Fetches /verify-email.php and extracts a fresh CSRF + email hidden value.
 // Only called when the registration redirect didn't land on the verify page.
 async function getVerifyCsrf(jar) {
-  const { text } = await get(VERIFY_URL, jar);
+  const { text } = await ltvGet(VERIFY_URL, jar, {
+    referer: REGISTER_URL,
+  });
   return {
-    csrf: extractInputValue(text, "csrf") ?? "",
+    csrf: extractLibertyCsrf(text) ?? "",
     emailFromPage: extractInputValue(text, "email") ?? "",
   };
 }
@@ -105,7 +293,7 @@ async function getVerifyCsrf(jar) {
 // Throws if the server stays on the verify page or returns an error message.
 async function submitOtp(jar, { emailFromPage, code, csrf }, log) {
   log(`[${TAG}] Submitting OTP: ${code}`);
-  const { finalUrl: otpLanded, text } = await post(
+  const { finalUrl: otpLanded, text } = await ltvPost(
     VERIFY_URL,
     jar,
     { csrf, email: emailFromPage, code: String(code).trim() },
@@ -133,14 +321,18 @@ async function submitOtp(jar, { emailFromPage, code, csrf }, log) {
 // GETs the dashboard to extract CSRF and trial form, then POSTs the trial claim.
 // Returns the final dashboard HTML for M3U extraction.
 async function claimTrial(jar, log) {
-  const { text: dash1, finalUrl: dashLanded } = await get(DASHBOARD_URL, jar);
+  const { text: dash1, finalUrl: dashLanded } = await ltvGet(
+    DASHBOARD_URL,
+    jar,
+    { referer: DASHBOARD_URL },
+  );
 
   if ((dashLanded ?? "").includes("login") || dash1.includes("<title>Login"))
     throw new Error(
       `[${TAG}] Session invalid after OTP — landed on login page.`,
     );
 
-  const csrf = extractInputValue(dash1, "csrf");
+  const csrf = extractLibertyCsrf(dash1);
   if (!csrf) {
     log(
       `[${TAG}] CSRF not found on dashboard — trial may already be active.`,
@@ -159,7 +351,7 @@ async function claimTrial(jar, log) {
   }
 
   log(`[${TAG}] Claiming trial (region ${TRIAL_REGION} — Arabic Package)…`);
-  await post(
+  await ltvPost(
     CLAIM_TRIAL_URL,
     jar,
     { csrf, region_id: TRIAL_REGION, "trial-submit": "1" },
@@ -167,7 +359,9 @@ async function claimTrial(jar, log) {
   );
   log(`[${TAG}] ✅ Trial claimed.`);
 
-  const { text: dash2 } = await get(DASHBOARD_URL, jar);
+  const { text: dash2 } = await ltvGet(DASHBOARD_URL, jar, {
+    referer: DASHBOARD_URL,
+  });
   return dash2;
 }
 
@@ -229,7 +423,9 @@ export default {
     // Step 7: Re-fetch the dashboard if the M3U link isn't present yet.
     if (!extractPlaylists(dashHtml)) {
       await new Promise((r) => setTimeout(r, 4_000));
-      const { text } = await get(DASHBOARD_URL, jar);
+      const { text } = await ltvGet(DASHBOARD_URL, jar, {
+        referer: DASHBOARD_URL,
+      });
       dashHtml = text;
     }
 
