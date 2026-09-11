@@ -20,42 +20,10 @@
  *   extractInputValue(html, name)    — generic hidden input value by field name
  */
 
-import { ProxyAgent, setGlobalDispatcher } from "undici";
-
-const proxyUrl =
-  process.env.PROXY_URL ||
-  process.env.HTTPS_PROXY ||
-  process.env.HTTP_PROXY ||
-  null;
-
-if (proxyUrl) {
-  try {
-    setGlobalDispatcher(new ProxyAgent(proxyUrl));
-  } catch (err) {
-    console.error("⚠ [cookieClient] Failed to initialize ProxyAgent:", err.message);
-  }
-}
-
 export const DEFAULT_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const MAX_REDIRECTS = 10;
 const DEFAULT_TIMEOUT = 25_000;
-
-// Standard modern desktop browser headers to prevent basic Cloudflare bot heuristic rejections
-export const DEFAULT_NAV_HEADERS = {
-  "User-Agent": DEFAULT_UA,
-  Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Sec-Ch-Ua":
-    '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-  "Sec-Ch-Ua-Mobile": "?0",
-  "Sec-Ch-Ua-Platform": '"Windows"',
-  "Sec-Fetch-Dest": "document",
-  "Sec-Fetch-Mode": "navigate",
-  "Sec-Fetch-User": "?1",
-  "Upgrade-Insecure-Requests": "1",
-};
 
 // ── Jar helpers ───────────────────────────────────────────────────────────────
 
@@ -99,9 +67,9 @@ export async function request(method, url, jar, opts = {}) {
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const headers = {
-      ...DEFAULT_NAV_HEADERS,
       "User-Agent": ua,
-      "Sec-Fetch-Site": currentMethod === "POST" ? "same-origin" : "none",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
       Cookie: cookieStr(resolvedJar),
     };
 
@@ -262,41 +230,16 @@ export const extractCsrfToken = (html) =>
 export const extractCsrfInlineJs = (html) =>
   html.match(/csrfToken:\s*['"]([^'"]+)['"]/)?.[1] ?? null;
 
-// Checks if an HTTP response status or HTML content indicates a Cloudflare challenge or block.
-export function isCloudflareBlocked(status, html = "") {
-  if (status === 403 || status === 503) {
-    if (
-      /cloudflare|cf-ray|cf-mitigated|just a moment|turnstile|attention required|access denied/i.test(
-        html,
-      )
-    ) {
-      return true;
-    }
-  }
-  return (
-    /<title>\s*(?:Just a moment\.\.\.|Attention Required! \| Cloudflare|Access denied)\s*<\/title>/i.test(
-      html,
-    ) ||
-    /cf-browser-verification|cf-turnstile|cf_chl_opt/i.test(html)
-  );
-}
-
 // Extracts the value of any hidden input field by its name attribute.
-// Tries both name-before-value and value-before-name attribute orderings,
-// supporting both single and double quotes as well as unquoted values.
+// Tries both name-before-value and value-before-name attribute orderings.
 export function extractInputValue(html, name) {
-  if (!html) return null;
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const r1 = new RegExp(`name=["']${escaped}["'][^>]*value=["']([^"']*)["']`, "i").exec(
+  const r1 = new RegExp(`name="${escaped}"[^>]*value="([^"]*)"`, "i").exec(
     html,
   );
   if (r1) return r1[1];
-  const r2 = new RegExp(`value=["']([^"']*)["'][^>]*name=["']${escaped}["']`, "i").exec(
+  const r2 = new RegExp(`value="([^"]*)"[^>]*name="${escaped}"`, "i").exec(
     html,
   );
-  if (r2) return r2[1];
-  const r3 = new RegExp(`name=["']?${escaped}["']?\\s+value=["']?([^"'>\\s]+)`, "i").exec(
-    html,
-  );
-  return r3?.[1] ?? null;
+  return r2?.[1] ?? null;
 }

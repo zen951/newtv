@@ -27,8 +27,6 @@ import {
   extractInputValue,
   plainText,
   stripHtml,
-  errSnippet,
-  isCloudflareBlocked,
 } from "../http/cookieClient.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -48,29 +46,10 @@ const TRIAL_REGION = "32"; // Arabic Package
 // Returns the verification status and any CSRF/email values the server embedded
 // in the redirect landing — avoids an extra GET that could reset the session.
 async function register(jar, { name, email, password }, log) {
-  const { text: regPage, status } = await get(REGISTER_URL, jar);
-
-  if (isCloudflareBlocked(status, regPage)) {
-    throw new Error(
-      `[${TAG}] Cloudflare blocked the request (HTTP ${status}). ` +
-      `Vercel/datacenter serverless IPs are blocked by Cloudflare for ${new URL(REGISTER_URL).hostname}. ` +
-      `Configure a proxy (set PROXY_URL in Vercel environment variables) or run the backend locally.`
-    );
-  }
-
-  if (status && status >= 400) {
-    throw new Error(
-      `[${TAG}] Failed to load register.php (HTTP ${status}): ${errSnippet(regPage, 160)}`
-    );
-  }
-
+  const { text: regPage } = await get(REGISTER_URL, jar);
   const csrf = extractInputValue(regPage, "csrf");
-  if (!csrf) {
-    const pageTitle = regPage.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() ?? "No Title";
-    throw new Error(
-      `[${TAG}] Could not extract CSRF from register.php (HTTP ${status}, Title: "${pageTitle}"). ${errSnippet(regPage, 160)}`
-    );
-  }
+  if (!csrf)
+    throw new Error(`[${TAG}] Could not extract CSRF from register.php.`);
 
   log(`[${TAG}] Submitting registration for ${email}…`);
   const { finalUrl, text } = await post(
@@ -115,12 +94,7 @@ async function register(jar, { name, email, password }, log) {
 // Fetches /verify-email.php and extracts a fresh CSRF + email hidden value.
 // Only called when the registration redirect didn't land on the verify page.
 async function getVerifyCsrf(jar) {
-  const { text, status } = await get(VERIFY_URL, jar);
-  if (isCloudflareBlocked(status, text)) {
-    throw new Error(
-      `[${TAG}] Cloudflare blocked the verify-email request (HTTP ${status}).`,
-    );
-  }
+  const { text } = await get(VERIFY_URL, jar);
   return {
     csrf: extractInputValue(text, "csrf") ?? "",
     emailFromPage: extractInputValue(text, "email") ?? "",
@@ -131,18 +105,12 @@ async function getVerifyCsrf(jar) {
 // Throws if the server stays on the verify page or returns an error message.
 async function submitOtp(jar, { emailFromPage, code, csrf }, log) {
   log(`[${TAG}] Submitting OTP: ${code}`);
-  const { finalUrl: otpLanded, text, status } = await post(
+  const { finalUrl: otpLanded, text } = await post(
     VERIFY_URL,
     jar,
     { csrf, email: emailFromPage, code: String(code).trim() },
     VERIFY_URL,
   );
-
-  if (isCloudflareBlocked(status, text)) {
-    throw new Error(
-      `[${TAG}] Cloudflare blocked the OTP submission (HTTP ${status}).`,
-    );
-  }
 
   const stayedOnVerify = (otpLanded ?? "").includes("verify-email");
   const hasError =
@@ -165,13 +133,7 @@ async function submitOtp(jar, { emailFromPage, code, csrf }, log) {
 // GETs the dashboard to extract CSRF and trial form, then POSTs the trial claim.
 // Returns the final dashboard HTML for M3U extraction.
 async function claimTrial(jar, log) {
-  const { text: dash1, finalUrl: dashLanded, status } = await get(DASHBOARD_URL, jar);
-
-  if (isCloudflareBlocked(status, dash1)) {
-    throw new Error(
-      `[${TAG}] Cloudflare blocked dashboard access (HTTP ${status}).`,
-    );
-  }
+  const { text: dash1, finalUrl: dashLanded } = await get(DASHBOARD_URL, jar);
 
   if ((dashLanded ?? "").includes("login") || dash1.includes("<title>Login"))
     throw new Error(
@@ -215,7 +177,7 @@ export default {
   meta: {
     id: "libertytv",
     name: "LibertyTV (Gmails)",
-    description: `${TRIAL_HOURS} Hours`,
+    description: "24 Hours",
   },
 
   async execute({

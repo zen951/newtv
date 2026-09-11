@@ -39,13 +39,8 @@ process.on("unhandledRejection", (reason) => {
   console.error("⚠ [Process] Unhandled Rejection:", reason?.message || reason);
 });
 
-// ── Export default app for Vercel serverless ─────────────────────────────────
-export default app;
-
 // ── Start ────────────────────────────────────────────────────────────────────
 
-if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`\n🚀  IPTV Automation backend  →  http://localhost:${PORT}\n`);
-  });
-}
+app.listen(PORT, () => {
+  console.log(`\n🚀  IPTV Automation backend  →  http://localhost:${PORT}\n`);
+});

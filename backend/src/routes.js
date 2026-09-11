@@ -27,15 +27,10 @@ const router = Router();
 // Returns available providers and services so the UI can populate its selectors.
 
 router.get("/info", (_req, res) => {
-  try {
-    res.json({
-      providers: emailProviders.map((p) => p.meta),
-      services: registrationServices.map((s) => s.meta),
-    });
-  } catch (err) {
-    logger.error(`[Route] /info error: ${err.message}`);
-    res.status(500).json({ error: `Failed to load automation info: ${err.message}` });
-  }
+  res.json({
+    providers: emailProviders.map((p) => p.meta),
+    services: registrationServices.map((s) => s.meta),
+  });
 });
 
 // ── Start task ───────────────────────────────────────────────────────────────
