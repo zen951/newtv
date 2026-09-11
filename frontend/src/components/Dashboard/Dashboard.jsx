@@ -83,8 +83,10 @@ export default function Dashboard() {
         {backendError && (
           <div className="backend-error-banner">
             <span>
-              ⚠️ {backendError} — ensure the backend is running at{" "}
-              <strong>http://localhost:3001</strong>
+              ⚠️ {backendError}
+              {window.location.hostname === "localhost" && (
+                <> — ensure the backend is running at <strong>http://localhost:3001</strong></>
+              )}
             </span>
           </div>
         )}
