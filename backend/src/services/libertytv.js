@@ -209,35 +209,35 @@ async function register(jar, { name, email, password }, log) {
     referer: "https://libertytv.net/",
   });
 
-  // Check for Cloudflare challenge / WAF blocking on Vercel datacenter IPs
-  const isCloudflareBlocked =
-    status === 403 ||
-    status === 503 ||
-    /just a moment|cf-turnstile|cf-browser-verification|challenge-platform|attention required|cloudflare ray id/i.test(
-      regPage,
-    );
-
-  if (isCloudflareBlocked) {
-    throw new Error(
-      `[${TAG}] Cloudflare bot protection blocked register.php (HTTP ${status}). The target site is restricting Vercel datacenter IPs. Set HTTPS_PROXY or PROXY_URL in Vercel Environment Variables to bypass datacenter IP blocking.`,
-    );
-  }
-
-  if (status >= 400) {
-    throw new Error(
-      `[${TAG}] register.php returned HTTP ${status}: ${errSnippet(regPage, 150)}`,
-    );
-  }
-
   const csrf = extractLibertyCsrf(regPage);
   if (!csrf) {
+    // Check for Cloudflare challenge / WAF blocking on Vercel datacenter IPs
+    const isCloudflareBlocked =
+      status === 403 ||
+      status === 503 ||
+      /<title>\s*(?:Just a moment|Attention Required).*?<\/title>/i.test(regPage) ||
+      (status !== 200 &&
+        /cf-turnstile|cf-browser-verification|cloudflare ray id/i.test(regPage));
+
+    if (isCloudflareBlocked) {
+      throw new Error(
+        `[${TAG}] Cloudflare bot protection blocked register.php (HTTP ${status}). The target site is restricting Vercel datacenter IPs. Set HTTPS_PROXY or PROXY_URL in Vercel Environment Variables to bypass datacenter IP blocking.`,
+      );
+    }
+
+    if (status >= 400) {
+      throw new Error(
+        `[${TAG}] register.php returned HTTP ${status}: ${errSnippet(regPage, 150)}`,
+      );
+    }
+
     const pageSnippet = stripHtml(regPage).slice(0, 200);
     throw new Error(
       `[${TAG}] Could not extract CSRF from register.php (HTTP ${status}, URL: ${finalUrl}). Page preview: "${pageSnippet}"`,
     );
   }
 
-  log(`[${TAG}] Submitting registration for ${email}…`);
+  log(`[${TAG}] ✅ CSRF extracted. Submitting registration for ${email}…`);
   const { finalUrl: landedUrl, text } = await ltvPost(
     REGISTER_URL,
     jar,
