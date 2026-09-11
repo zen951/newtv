@@ -56,17 +56,26 @@ const BROWSER_UA =
 // ── Proxy Dispatcher (Lazy) ───────────────────────────────────────────────────
 
 let proxyDispatcher = null;
-const proxyUrl =
-  process.env.HTTPS_PROXY ||
-  process.env.HTTP_PROXY ||
-  process.env.PROXY_URL;
+let currentProxyUrl = null;
+
+function getActiveProxy() {
+  return (
+    process.env.LIBERTYTV_PROXY ||
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY ||
+    process.env.PROXY_URL ||
+    null
+  );
+}
 
 async function getDispatcher() {
-  if (!proxyUrl) return undefined;
-  if (!proxyDispatcher) {
+  const active = getActiveProxy();
+  if (!active) return undefined;
+  if (!proxyDispatcher || currentProxyUrl !== active) {
     try {
       const { ProxyAgent } = await import("undici");
-      proxyDispatcher = new ProxyAgent(proxyUrl);
+      proxyDispatcher = new ProxyAgent(active);
+      currentProxyUrl = active;
     } catch {
       // undici dispatcher fallback
     }
@@ -219,6 +228,12 @@ function extractLibertyCsrf(html) {
 // Returns the verification status and any CSRF/email values the server embedded
 // in the redirect landing — avoids an extra GET that could reset the session.
 async function register(jar, { name, email, password }, log) {
+  const activeProxy = getActiveProxy();
+  if (activeProxy) {
+    const masked = activeProxy.replace(/:[^:@]+@/, ":****@");
+    log(`[${TAG}] Routing requests via proxy (${masked})…`);
+  }
+
   log(`[${TAG}] Fetching register page…`);
   let { text: regPage, status, finalUrl } = await ltvGet(REGISTER_URL, jar);
 
