@@ -83,9 +83,10 @@ async function getDispatcher() {
 async function ltvRequest(method, url, jar, opts = {}) {
   const {
     body = null,
-    referer = "https://libertytv.net/",
+    referer = null,
     origin = null,
     timeout = DEFAULT_TIMEOUT,
+    fallbackHeaders = false,
   } = opts;
 
   const resolvedJar = jar ?? {};
@@ -97,28 +98,42 @@ async function ltvRequest(method, url, jar, opts = {}) {
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const isPost = currentMethod === "POST";
     const currentOrigin = origin ?? new URL(currentUrl).origin;
+    const cookieHeader = cookieStr(resolvedJar);
 
-    const headers = {
-      "User-Agent": BROWSER_UA,
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-      "Accept-Language": "en-US,en;q=0.9",
-      "sec-ch-ua":
-        '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": '"Windows"',
-      "sec-fetch-dest": "document",
-      "sec-fetch-mode": "navigate",
-      "sec-fetch-site": isPost
-        ? "same-origin"
-        : referer?.includes("account.libertytv.net")
+    let headers;
+    if (fallbackHeaders) {
+      headers = {
+        "User-Agent": BROWSER_UA,
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+        ...(referer ? { Referer: referer } : {}),
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      };
+    } else {
+      headers = {
+        "User-Agent": BROWSER_UA,
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "sec-ch-ua":
+          '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": isPost
           ? "same-origin"
-          : "cross-site",
-      "sec-fetch-user": "?1",
-      "upgrade-insecure-requests": "1",
-      ...(referer ? { Referer: referer } : {}),
-      Cookie: cookieStr(resolvedJar),
-    };
+          : referer
+            ? "same-origin"
+            : "none",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1",
+        ...(referer ? { Referer: referer } : {}),
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      };
+    }
 
     if (isPost) {
       Object.assign(headers, {
@@ -205,9 +220,19 @@ function extractLibertyCsrf(html) {
 // in the redirect landing — avoids an extra GET that could reset the session.
 async function register(jar, { name, email, password }, log) {
   log(`[${TAG}] Fetching register page…`);
-  const { text: regPage, status, finalUrl } = await ltvGet(REGISTER_URL, jar, {
-    referer: "https://libertytv.net/",
-  });
+  let { text: regPage, status, finalUrl } = await ltvGet(REGISTER_URL, jar);
+
+  // If initial response is 403 or 429, retry once with clean headers after a brief pause
+  if (status === 403 || status === 429) {
+    log(`[${TAG}] Initial request returned HTTP ${status}, retrying with clean headers…`, "warn");
+    await new Promise((r) => setTimeout(r, 1500));
+    const retry = await ltvGet(REGISTER_URL, jar, { fallbackHeaders: true });
+    if (retry.status === 200 || extractLibertyCsrf(retry.text)) {
+      regPage = retry.text;
+      status = retry.status;
+      finalUrl = retry.finalUrl;
+    }
+  }
 
   const csrf = extractLibertyCsrf(regPage);
   if (!csrf) {
@@ -220,8 +245,13 @@ async function register(jar, { name, email, password }, log) {
         /cf-turnstile|cf-browser-verification|cloudflare ray id/i.test(regPage));
 
     if (isCloudflareBlocked) {
+      const rayId =
+        /Cloudflare Ray ID:\s*<strong[^>]*>([^<]+)<\/strong>/i.exec(regPage)?.[1] ||
+        /ray id[:\s]+([a-f0-9]+)/i.exec(regPage)?.[1] ||
+        "";
+      const rayInfo = rayId ? ` (Ray ID: ${rayId})` : "";
       throw new Error(
-        `[${TAG}] Cloudflare bot protection blocked register.php (HTTP ${status}). The target site is restricting Vercel datacenter IPs. Set HTTPS_PROXY or PROXY_URL in Vercel Environment Variables to bypass datacenter IP blocking.`,
+        `[${TAG}] Cloudflare bot protection blocked register.php (HTTP ${status}${rayInfo}). The target site is restricting Vercel datacenter IPs. Set HTTPS_PROXY or PROXY_URL in Vercel Environment Variables to bypass datacenter IP blocking.`,
       );
     }
 
